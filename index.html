@@ -63,6 +63,13 @@
   .video-row label.checked { color:var(--text-dim); text-decoration:line-through; }
   .video-row a { font-size:12px; color:var(--accent); text-decoration:none; white-space:nowrap; margin-left:8px; }
   .video-row a:hover { text-decoration:underline; }
+  .pct-select {
+    background:var(--panel-2); border:1px solid var(--border); color:var(--text);
+    font-size:12px; border-radius:6px; padding:4px 6px; flex-shrink:0; cursor:pointer;
+  }
+  .pct-select:disabled { opacity:.6; cursor:not-allowed; }
+  .pct-select:focus { border-color:var(--accent); outline:none; }
+  .pct-select option[value="100"] { color:var(--accent-2); }
   .note { font-size:12.5px; color:var(--text-dim); background:var(--panel-2); border:1px solid var(--border);
           border-radius:8px; padding:10px 12px; margin-top:16px; line-height:1.5; }
   .status { margin-top:10px; font-size:13px; color:var(--text-dim); }
@@ -251,6 +258,17 @@ function setStatus(message) {
   document.getElementById("accessStatus").textContent = message;
 }
 
+// Progress values are stored per-video as a percentage (0, 30, 50, 75, 100).
+// Older saved data may have plain booleans (true/false) — normalize those too.
+const PCT_STEPS = [0, 30, 50, 75, 100];
+
+function getPct(key) {
+  const v = state[key];
+  if (v === true) return 100;
+  if (typeof v === "number") return v;
+  return 0;
+}
+
 
 /* ============================================================
    5. LOAD PROGRESS FROM SUPABASE
@@ -309,6 +327,7 @@ function render() {
   container.innerHTML = "";
 
   let totalVideos = 0;
+  let totalPctSum = 0;
   let totalDone = 0;
   let daysStarted = 0;
   let daysDone = 0;
@@ -316,17 +335,18 @@ function render() {
   DAYS.forEach(day => {
     const det = document.createElement("details");
 
-    const doneCount = day.videos.filter(
-      (_, i) => state[day.id + "-" + i]
-    ).length;
+    const pcts = day.videos.map((_, i) => getPct(day.id + "-" + i));
+    const doneCount = pcts.filter(p => p === 100).length;
+    const pctSum = pcts.reduce((a, b) => a + b, 0);
 
     totalVideos += day.videos.length;
+    totalPctSum += pctSum;
     totalDone += doneCount;
 
-    if (doneCount > 0) daysStarted++;
+    if (pcts.some(p => p > 0)) daysStarted++;
     if (doneCount === day.videos.length) daysDone++;
 
-    const pct = Math.round((doneCount / day.videos.length) * 100);
+    const pct = Math.round(pctSum / day.videos.length);
 
     const summary = document.createElement("summary");
 
@@ -357,15 +377,21 @@ function render() {
 
     day.videos.forEach((video, i) => {
       const key = day.id + "-" + i;
-      const checked = !!state[key];
+      const videoPct = getPct(key);
+      const checked = videoPct === 100;
 
       const row = document.createElement("div");
       row.className = "video-row";
+
+      const options = PCT_STEPS.map(step =>
+        `<option value="${step}" ${step === videoPct ? "selected" : ""}>${step}%</option>`
+      ).join("");
 
       row.innerHTML = `
         <input
           type="checkbox"
           id="${key}"
+          data-key="${key}"
           ${checked ? "checked" : ""}
           ${isOwner ? "" : "disabled"}
         >
@@ -376,6 +402,14 @@ function render() {
         >
           ${video.t}
         </label>
+
+        <select
+          class="pct-select"
+          data-key="${key}"
+          ${isOwner ? "" : "disabled"}
+        >
+          ${options}
+        </select>
 
         <a
           href="${video.url}"
@@ -395,8 +429,25 @@ function render() {
     if (isOwner) {
       body.querySelectorAll("input[type=checkbox]").forEach(cb => {
         cb.addEventListener("change", async (event) => {
+          const key = event.target.dataset.key;
 
-          state[event.target.id] = event.target.checked;
+          // Checking the box always sets 100%. Unchecking drops it to 0%.
+          state[key] = event.target.checked ? 100 : 0;
+          lastUpdateStr = new Date().toLocaleString();
+
+          await saveProgress();
+
+          render();
+        });
+      });
+
+      body.querySelectorAll("select.pct-select").forEach(sel => {
+        sel.addEventListener("change", async (event) => {
+          const key = event.target.dataset.key;
+
+          // Picking 100% from the dropdown also auto-checks the box
+          // (they're the same underlying value, so this happens for free).
+          state[key] = Number(event.target.value);
           lastUpdateStr = new Date().toLocaleString();
 
           await saveProgress();
@@ -408,7 +459,7 @@ function render() {
   });
 
   const overallPct = totalVideos
-    ? Math.round((totalDone / totalVideos) * 100)
+    ? Math.round(totalPctSum / totalVideos)
     : 0;
 
   document.getElementById("overallPct").textContent =
