@@ -1,0 +1,11 @@
+{
+  "input_variables": [
+    "paper_input",
+    "style_input",
+    "length_input"
+  ],
+  "template": "Please summarize the research paper titled '{paper_input}'. Explain it in a {style_input} style. The explanation should be {length_input}.",
+  "template_format": "f-string",
+  "validate_template": true,
+  "_type": "prompt"
+}
